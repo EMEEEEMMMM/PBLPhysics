@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f7f6">
+  <meta name="description" content="双舱温室实时观测、实验记录与 Arduino 串口调试。">
+  <title>Thermarium | 双舱温室观测台</title>
+  <link rel="icon" href="mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="telemetry.js"></script>
+  <script defer src="chart.js"></script>
+  <script defer src="serial.js"></script>
+  <script defer src="device.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <a class="skip" href="#workspace">跳到工作区</a>
+  <svg class="sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 4 12 2.5-6H21"/></symbol>
+    <symbol id="i-records" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></symbol>
+    <symbol id="i-code" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m7 9 3 3-3 3m6 0h4"/></symbol>
+    <symbol id="i-usb" viewBox="0 0 24 24"><path d="M8 3v4m8-4v4M6 7h12v3a6 6 0 0 1-6 6v5m2-5h-2a6 6 0 0 1-6-6V7"/></symbol>
+    <symbol id="i-screen" viewBox="0 0 24 24"><path d="M8 4H4v4m12-4h4v4M4 16v4h4m12-4v4h-4"/></symbol>
+    <symbol id="i-drop" viewBox="0 0 24 24"><path d="M12 3c3.6 5.3 6 8 6 11a6 6 0 0 1-12 0c0-3 2.4-5.7 6-11Z"/><path d="M9.4 15.1c.2 1.3 1.1 2.2 2.4 2.4"/></symbol>
+    <symbol id="i-therm" viewBox="0 0 24 24"><path d="M14 14.76V5a2 2 0 1 0-4 0v9.76a4 4 0 1 0 4 0Z"/><circle cx="12" cy="17" r="1.4"/></symbol>
+    <symbol id="i-co2" viewBox="0 0 24 24"><circle cx="7" cy="12" r="2.5"/><circle cx="16.5" cy="8.5" r="2"/><circle cx="16.5" cy="15.5" r="2"/><path d="M9.3 11l5-1.9M9.3 13l5 1.9"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4"/></symbol>
+    <symbol id="i-mark" viewBox="0 0 24 24"><path d="M5 21V4m0 1c5-4 8 4 14 0v10c-6 4-9-4-14 0"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1"/></symbol>
+    <symbol id="i-fan" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"/><path d="M12 10a5 5 0 0 1 0-7c4 0 6 4 2 8m0 1a5 5 0 0 1 7 0c0 4-4 6-8 2m-1 0a5 5 0 0 1 0 7c-4 0-6-4-2-8m0-1a5 5 0 0 1-7 0c0-4 4-6 8-2"/></symbol>
+    <symbol id="i-theme" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4m11.4-11.4 1.4-1.4"/></symbol>
+    <symbol id="i-scan" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.2-4.2"/></symbol>
+  </svg>
+  <header class="masthead">
+    <div class="frame mast-inner">
+      <a class="brand" href="#observe" aria-label="Thermarium，实时观测">
+        <img alt="" src="mark.svg" width="38" height="38">
+        <span><strong>Thermarium</strong><small>WFLA 物理 PBL · 温室观测</small></span>
+      </a>
+      <nav class="top-nav" aria-label="主导航">
+        <a href="#observe" data-view="observe" aria-current="page"><svg class="icon"><use href="#i-pulse"/></svg><span>实时观测</span></a>
+        <a href="#records" data-view="records"><svg class="icon"><use href="#i-records"/></svg><span>实验记录</span></a>
+        <a href="#debug" data-view="debug"><svg class="icon"><use href="#i-code"/></svg><span>串口调试</span></a>
+      </nav>
+      <div class="mast-actions">
+        <button class="button subtle theme-button" id="theme-toggle" type="button" aria-pressed="false" title="切换到深色控制台界面"><svg class="icon"><use href="#i-theme"/></svg><span>深色</span></button>
+        <button class="source-badge" id="demo-toggle" type="button" data-tone="demo" aria-pressed="true" title="切换模拟数据"><span class="status-dot"></span><span id="source-text">模拟数据</span></button>
+        <button class="button primary" id="connect" type="button"><svg class="icon"><use href="#i-usb"/></svg><span id="connect-label">连接 Arduino</span></button>
+      </div>
+    </div>
+  </header>
+
+  <main class="frame" id="workspace" tabindex="-1">
+    <noscript><p class="notice">请在浏览器中启用 JavaScript 后重新打开页面。</p></noscript>
+    <p id="notice" class="notice" role="status" hidden></p>
+    <section id="observe" class="view" aria-labelledby="observe-title">
+      <div class="page-title">
+        <div>
+          <h1 id="observe-title" tabindex="-1">双舱温室观测台</h1>
+          <p id="observe-sub">相同光照下，比较湿海绵与混凝土的升温过程。</p>
+        </div>
+        <div class="title-actions">
+          <span class="hw-pill" id="observe-fan-pill" data-active="false">风扇 —</span>
+          <button class="button secondary presentation-button" id="present" type="button" aria-pressed="false"><svg class="icon"><use href="#i-screen"/></svg><span>投屏模式</span></button>
+        </div>
+      </div>
+
+      <div class="observation-board">
+        <div class="single-toolbar" id="single-toolbar" hidden>
+          <span class="single-label" id="single-toolbar-note">双舱模拟预览 · 可切换为单传感器实验室模式</span>
+          <div class="single-slot-wrap" id="single-slot-group" hidden>
+            <span class="single-label">单传感测试区域</span>
+            <div class="segmented compact" role="group" aria-label="单传感器当前测试区域">
+              <button type="button" data-slot="A" aria-pressed="true">A 湿海绵舱</button>
+              <button type="button" data-slot="B" aria-pressed="false">B 混凝土舱</button>
+            </div>
+          </div>
+          <button class="button subtle demo-single-btn" id="demo-single-btn" type="button" aria-pressed="false" hidden>切换单传感器模拟</button>
+        </div>
+
+        <div class="bay-grid" id="bay-grid">
+          <article class="bay bay-a" id="bay-A" aria-labelledby="title-A">
+            <header class="bay-header">
+              <span class="bay-letter" aria-hidden="true">A</span>
+              <div><h2 id="title-A">湿海绵舱</h2><p id="sub-A">左舱 / SCD40</p></div>
+              <div class="bay-badges">
+                <span class="bay-status" id="health-A" data-tone="demo"><span class="status-dot"></span><span>模拟采样</span></span>
+              </div>
+            </header>
+            <div class="bay-readings">
+              <div class="temperature">
+                <span class="label"><svg class="icon"><use href="#i-therm"/></svg>舱内温度</span>
+                <p class="temperature-value"><strong id="temp-A">—</strong><span>°C</span></p>
+                <div class="bay-actuators">
+                  <span class="hw-pill" id="bay-mist-A" data-active="false">雾化 —</span>
+                  <span class="hw-pill" id="bay-rh-A" data-active="false">手动</span>
+                </div>
+              </div>
+              <dl class="secondary-readings">
+                <div><dt><svg class="icon"><use href="#i-drop"/></svg>相对湿度</dt><dd><strong id="rh-A">—</strong><span>%RH</span></dd></div>
+                <div><dt><svg class="icon"><use href="#i-co2"/></svg>二氧化碳</dt><dd><strong id="co2-A">—</strong><span>ppm</span><em class="ext-badge" id="co2-ext-A" hidden>扩展</em></dd></div>
+              </dl>
+            </div>
+          </article>
+          <article class="bay bay-b" id="bay-B" aria-labelledby="title-B">
+            <header class="bay-header">
+              <span class="bay-letter" aria-hidden="true">B</span>
+              <div><h2 id="title-B">混凝土舱</h2><p id="sub-B">右舱 / SCD40</p></div>
+              <div class="bay-badges">
+                <span class="bay-status" id="health-B" data-tone="demo"><span class="status-dot"></span><span>模拟采样</span></span>
+              </div>
+            </header>
+            <div class="bay-readings">
+              <div class="temperature">
+                <span class="label"><svg class="icon"><use href="#i-therm"/></svg>舱内温度</span>
+                <p class="temperature-value"><strong id="temp-B">—</strong><span>°C</span></p>
+                <div class="bay-actuators">
+                  <span class="hw-pill" id="bay-mist-B" data-active="false">雾化 —</span>
+                  <span class="hw-pill" id="bay-rh-B" data-active="false">手动</span>
+                </div>
+              </div>
+              <dl class="secondary-readings">
+                <div><dt><svg class="icon"><use href="#i-drop"/></svg>相对湿度</dt><dd><strong id="rh-B">—</strong><span>%RH</span></dd></div>
+                <div><dt><svg class="icon"><use href="#i-co2"/></svg>二氧化碳</dt><dd><strong id="co2-B">—</strong><span>ppm</span><em class="ext-badge" id="co2-ext-B" hidden>扩展</em></dd></div>
+              </dl>
+            </div>
+          </article>
+        </div>
+
+        <div class="observe-grid">
+          <section class="trend" aria-labelledby="trend-title">
+            <header class="panel-heading trend-heading">
+              <div><h2 id="trend-title">舱内趋势</h2><p id="trend-caption">两舱数据共用同一时间轴</p></div>
+              <div class="trend-controls">
+                <div class="segmented" id="metrics" role="group" aria-label="趋势指标">
+                  <button type="button" data-metric="temp" aria-pressed="true">温度</button>
+                  <button type="button" data-metric="rh" aria-pressed="false">湿度</button>
+                  <button type="button" data-metric="co2" aria-pressed="false">CO₂</button>
+                </div>
+                <label class="sr-only" for="chart-range">时间范围</label>
+                <select class="range-select" id="chart-range">
+                  <option value="5">近 5 分钟</option><option value="15">近 15 分钟</option><option value="all">全部采样</option>
+                </select>
+              </div>
+            </header>
+            <div class="chart-legend live-legend" id="live-legend">
+              <span id="legend-A-wrap"><i class="key-a"></i><span id="legend-A">A 湿海绵</span></span>
+              <span id="legend-B"><i class="key-b"></i><span id="legend-B-text">B 混凝土</span></span>
+            </div>
+            <div id="live-chart" class="chart" tabindex="0" role="group" aria-label="舱内趋势图。使用左右键查看采样，Escape 清除游标。"></div>
+            <footer class="chart-footer"><span id="sample-summary">等待采样</span><span id="sample-time">最近采样 —</span></footer>
+          </section>
+          <div class="observe-aside">
+            <section class="comparison" aria-labelledby="compare-title">
+              <h2 id="compare-title">温升对比</h2>
+              <p id="baseline-caption">相对于模拟曲线起点</p>
+              <dl class="delta-list">
+                <div id="delta-a" class="delta-a"><dt><span>A</span><b id="delta-a-label">湿海绵</b></dt><dd id="rise-A">—</dd></div>
+                <div id="delta-b" class="delta-b"><dt><span>B</span>混凝土</dt><dd id="rise-B">—</dd></div>
+              </dl>
+              <div class="difference" id="difference-row"><span>温升差 <small>A − B</small></span><strong id="rise-diff">—</strong></div>
+            </section>
+            <section class="quick-run" aria-labelledby="quick-title">
+              <div class="quick-lead"><svg class="icon"><use href="#i-clock"/></svg><h2 id="quick-title">当前实验</h2></div>
+              <div class="quick-state"><strong id="quick-state">未开始</strong><span id="quick-timer">10 分钟 / 默认</span></div>
+              <a class="text-link" href="#records">打开实验记录<svg class="icon"><use href="#i-arrow"/></svg></a>
+            </section>
+          </div>
+        </div>
+      </div>
+      <details class="help-inline measurement-notes">
+        <summary>湿热指数与读数说明</summary>
+        <dl class="humidex-readings"><div id="humidex-row-A"><dt id="humidex-label-A">A 舱 Humidex</dt><dd id="humidex-A">—</dd></div><div id="humidex-row-B"><dt>B 舱 Humidex</dt><dd id="humidex-B">—</dd></div></dl>
+        <p>Humidex 只按温度与相对湿度估算（本页在 20–50 °C 显示），不包含灯的辐射或风速，不能当作真实体感温度。SCD40 的标称 CO₂ 精度范围是 400–2000 ppm；超出时仍显示原读数并标注「扩展」，报告中应注明。</p>
+      </details>
+    </section>
+
+    <section id="records" class="view" aria-labelledby="records-title" hidden>
+      <div class="page-title">
+        <div><h1 id="records-title" tabindex="-1">实验记录</h1><p>用开灯时的读数作基线，记录固定光照时间下的舱内变化。</p></div>
+        <span class="title-meta" id="records-source">模拟记录 / 不用于报告</span>
+      </div>
+      <div class="record-grid">
+        <div class="record-work">
+          <section class="panel run-setup" aria-labelledby="run-setup-title">
+            <div class="panel-heading"><div><h2 id="run-setup-title">开始一次实验</h2><p id="run-guide">手动开启照明，再标记开灯。网页只记录时刻，不控制照明。</p></div></div>
+            <form id="run-form" class="run-form" novalidate>
+              <div class="fields">
+                <label>实验条件<select id="condition" name="condition"><option value="baseline">无添加（对照）</option><option value="mist">加水雾</option><option value="co2">增加 CO₂</option><option value="other">其他条件</option></select></label>
+                <label>设定值 / 标签
+                  <input id="setting" name="setting" maxlength="64" placeholder="可选，例如第一轮" aria-describedby="setting-error">
+                  <div class="preset-row" id="setting-presets" hidden></div>
+                  <small class="field-error" id="setting-error" hidden></small>
+                </label>
+                <label>光照时长（分钟）<input id="duration" name="duration" type="number" required min="1" max="60" step="1" value="10" aria-describedby="duration-error"><small class="field-error" id="duration-error" hidden></small></label>
+                <fieldset class="ambient"><legend>舱外基线（手填，可选）</legend><div class="ambient-fields">
+                  <label>温度（°C）<input id="ambient-temp" type="number" min="-30" max="70" step="0.1" aria-describedby="ambient-error" placeholder="—"></label>
+                  <label>湿度（%RH）<input id="ambient-rh" type="number" min="0" max="100" step="0.1" aria-describedby="ambient-error" placeholder="—"></label>
+                </div><small class="field-error" id="ambient-error" hidden></small></fieldset>
+              </div>
+              <div class="run-start"><span id="baseline-ready" class="muted"></span><button class="button primary" id="run-start" type="submit"><svg class="icon"><use href="#i-mark"/></svg>标记开灯并开始</button></div>
+              <p id="run-error" class="field-error" role="status" hidden></p>
+            </form>
+            <div id="run-active" class="run-active" hidden>
+              <div class="run-progress"><strong id="run-elapsed">00:00</strong><span id="run-goal">/ 10:00</span><progress id="run-progress" value="0" max="600" aria-label="光照记录进度"></progress></div>
+              <form class="annotation-form" id="annotation-form">
+                <label>添加事件<input id="annotation" maxlength="100" placeholder="例如：调整 CO₂ 浓度" required></label>
+                <button class="button secondary" type="submit">打点</button>
+              </form>
+              <div class="run-actions"><button class="button secondary" id="mark-off" type="button">标记关灯并结束</button><button class="button secondary" id="finish-run" type="button">只结束记录</button></div>
+            </div>
+            <p id="lamp-reminder" class="inline-note" hidden></p>
+          </section>
+
+          <section class="panel record-detail" aria-labelledby="record-detail-title">
+            <header class="panel-heading">
+              <div><h2 id="record-detail-title">采样与事件</h2><p id="record-detail-sub">开始记录后，温度曲线和带时间戳的数据表会出现在这里。</p></div>
+              <div class="tool-buttons">
+                <label class="sr-only" for="compare-run">对比历史实验</label>
+                <select class="range-select" id="compare-run" title="在图上叠加另一组已保存实验以便对比"><option value="">不叠加对照</option></select>
+                <button class="button secondary" id="export-chart" type="button" disabled>下载温度图</button>
+                <button class="button secondary" id="export-csv" type="button" disabled><svg class="icon"><use href="#i-download"/></svg>导出 CSV</button>
+                <button class="button subtle danger-text" id="delete-run" type="button" disabled>删除</button>
+              </div>
+            </header>
+            <div id="record-content" hidden>
+              <dl id="record-stats" class="record-stats"></dl>
+              <div class="chart-tools">
+                <div class="chart-legend">
+                  <span id="record-legend-A-wrap"><i class="key-a"></i><span id="record-legend-A">A 湿海绵</span></span>
+                  <span id="record-legend-B"><i class="key-b"></i>B 混凝土</span>
+                  <span id="record-legend-cmp" hidden><i class="key-cmp"></i><span id="record-legend-cmp-text">对照</span></span>
+                </div>
+                <span class="title-meta">距开灯（分:秒）</span>
+              </div>
+              <div id="record-chart" class="chart record-chart" tabindex="0" role="group" aria-label="本次实验温度图。使用左右键查看采样。"></div>
+              <div class="record-data">
+                <div>
+                  <h3>采样表 <small id="table-count"></small></h3>
+                  <div class="table-wrap" tabindex="0" role="region" aria-label="采样表，可横向滚动">
+                    <table><thead><tr><th scope="col">时间</th><th scope="col">舱</th><th scope="col">温度 / °C</th><th scope="col">湿度 / %RH</th><th scope="col">CO₂ / ppm</th></tr></thead><tbody id="sample-table"></tbody></table>
+                  </div>
+                </div>
+                <div class="event-block"><h3>事件</h3><ol id="event-list" class="event-list"></ol></div>
+              </div>
+            </div>
+          </section>
+        </div>
+        <aside class="panel run-archive" aria-labelledby="archive-title">
+          <h2 id="archive-title">实验列表</h2>
+          <p id="archive-notice">模拟记录与 Arduino 实测分开保存。</p>
+          <div id="archive-list" class="archive-list"></div>
+          <button class="button secondary" id="archive-export" type="button" disabled><svg class="icon"><use href="#i-download"/></svg>导出全部实验</button>
+          <details class="help-inline"><summary>课件测试要求</summary><p>按组记录同一自变量的多档设定，课件要求至少改变五次。水雾组可按小组方案试 40 / 50 / 60 / 70 / 80 %RH；加 CO₂ 组可试 600 / 1200 / 2500 / 4000 / 6000 ppm。若只有一颗传感器，可先测完 A 侧并保存，再切换单传感区域后测 B 侧，并用「叠加对照」对比。</p></details>
+        </aside>
+      </div>
+    </section>
+
+    <section id="debug" class="view" aria-labelledby="debug-title" hidden>
+      <div class="page-title">
+        <div><h1 id="debug-title" tabindex="-1">Arduino 串口调试</h1><p>查看每一条收发消息，并验证板端接线、I²C 传感器与执行器状态。</p></div>
+        <span class="title-meta" id="debug-profile">模拟器 / 双舱协议</span>
+      </div>
+      <div class="debug-grid">
+        <div class="debug-main">
+          <section class="panel terminal" aria-labelledby="terminal-title">
+            <header class="panel-heading"><div><h2 id="terminal-title"><svg class="icon"><use href="#i-code"/></svg>串口监视器</h2><p>RX 为接收，TX 为发送；未识别的原始内容仍会保留。</p></div><button class="button secondary" id="log-save" type="button"><svg class="icon"><use href="#i-download"/></svg>保存日志</button></header>
+            <div class="port-strip" role="group" aria-label="串口链路">
+              <div><small>链路</small><strong id="port-state">模拟串口</strong></div>
+              <div><label for="baud">波特率</label><select id="baud"><option value="115200">115200</option><option value="9600">9600</option><option value="57600">57600</option></select></div>
+              <div><small>有效采样</small><strong id="rx-count">0</strong></div>
+              <div><small>未解析行</small><strong id="bad-count">0</strong></div>
+            </div>
+            <div class="hw-diag-strip">
+              <div><small>引脚配置</small><span id="pins-summary">等待连接</span></div>
+              <div><small>I²C 总线</small><span id="scan-summary">未执行 I²C 扫描</span></div>
+            </div>
+            <form class="command-form" id="command-form" novalidate>
+              <label for="command">命令 <span>发送时附加换行</span></label>
+              <div><input id="command" maxlength="47" autocomplete="off" spellcheck="false" autocapitalize="characters" placeholder="例如 STATUS、SCAN 或 MIST A ON" aria-describedby="command-help command-error"><button class="button primary" id="send-command" type="submit">发送</button></div>
+              <small id="command-error" class="field-error" hidden></small>
+              <p id="command-help">仅在识别到双舱固件后允许发送。</p>
+            </form>
+            <p class="command-result" id="command-result" role="status">可先发 STATUS，查看 Arduino 回报的状态。</p>
+            <div class="terminal-tools">
+              <div class="segmented" id="log-mode" role="group" aria-label="日志过滤"><button type="button" data-log="all" aria-pressed="true">全部</button><button type="button" data-log="rx" aria-pressed="false">RX</button><button type="button" data-log="tx" aria-pressed="false">TX</button><button type="button" data-log="sys" aria-pressed="false">系统</button></div>
+              <div class="tool-buttons"><button class="button subtle" id="log-follow" type="button" aria-pressed="true">跟随开启</button><button class="button subtle" id="log-clear" type="button">清空</button></div>
+            </div>
+            <ol id="serial-log" class="terminal-log" tabindex="0" aria-label="串口日志"></ol>
+          </section>
+          <details class="help-inline connection-help" open>
+            <summary>学校 PPT 单侧接线速查（GreenhouseDual v1.1 默认引脚）</summary>
+            <div class="wiring-ref">
+              <table>
+                <thead><tr><th>模块</th><th>模块引脚</th><th>Nano 引脚</th><th>备注</th></tr></thead>
+                <tbody>
+                  <tr><td>SCD40 (单颗)</td><td>SDA / SCL</td><td>A4 / A5</td><td>5V 与 GND 接电源轨；无需 TCA9548A</td></tr>
+                  <tr><td>六针 OLED</td><td>SCL / SDA / RST / DC</td><td>D13 / D11 / D8 / D9</td><td>无 CS 脚，5V 与 GND 接电源轨</td></tr>
+                  <tr><td>风扇继电器</td><td>CH1 (IN)</td><td>D2</td><td>COM/NO 串接风扇与 3.7V 电池</td></tr>
+                  <tr><td>雾化三极管</td><td>S9013 基极 B</td><td>D3</td><td>C/E 并接雾化板按键两端；模块接 5V/GND</td></tr>
+                  <tr><td>电源共地</td><td>MB-102 GND</td><td>Nano GND</td><td>外部 5V 勿并接 USB 5V，仅共地</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </details>
+          <details class="help-inline connection-help">
+            <summary>连不上或收不到数据？</summary>
+            <p>用桌面版 Edge 或 Chrome；先关闭 Arduino IDE 的串口监视器，使用可传数据的 USB 线。学校和双舱版都默认 115200。Nano 打开串口时可能复位，等约 5–15 秒看首帧。没有 COM 口时检查设备管理器和 CH340/CH341 驱动。若怀疑 SCD40 未接牢，可点右侧「扫描 I²C」。</p>
+          </details>
+        </div>
+        <aside class="panel control-rack" aria-labelledby="control-title">
+          <header class="panel-heading"><div><h2 id="control-title">设备控制</h2><p id="control-profile">模拟命令不会发到 Arduino。</p></div></header>
+          <div class="tool-buttons diagnostic-buttons">
+            <button class="button secondary" data-command="STATUS" type="button">读取状态</button>
+            <button class="button secondary" data-command="SCAN" type="button"><svg class="icon"><use href="#i-scan"/></svg>扫描 I²C</button>
+            <button class="button secondary" data-command="HELP" type="button">命令列表</button>
+          </div>
+          <button class="button stop" id="stop-all" type="button" data-command="STOP"><svg class="icon"><use href="#i-stop"/></svg>请求全部停止</button>
+          <p class="hint" id="stop-hint">页面显示板端状态，不代表实物已停止；请现场核对。</p>
+          <div class="actuator">
+            <div class="actuator-heading"><svg class="icon"><use href="#i-fan"/></svg><h3>循环风扇 (D2)</h3><span id="fan-state">未知</span></div>
+            <div class="tool-buttons"><button class="button secondary" data-command="FAN ON" type="button">开启风扇</button><button class="button secondary" data-command="FAN OFF" type="button">关闭风扇</button></div>
+          </div>
+          <div class="actuator">
+            <div class="actuator-heading"><svg class="icon"><use href="#i-drop"/></svg><h3>雾化与湿度反馈 (D3)</h3></div>
+            <dl class="mist-state"><div><dt>A 舱</dt><dd id="mist-A">未知</dd></div><div><dt>B 舱</dt><dd id="mist-B">未知</dd></div></dl>
+            <label class="scope-label">控制范围<select id="scope"><option value="">A + B 同时</option><option value="A">仅 A 舱</option><option value="B">仅 B 舱</option></select></label>
+            <div class="tool-buttons"><button class="button secondary" data-mist="ON" type="button">开启雾化</button><button class="button secondary" data-mist="OFF" type="button">关闭雾化</button></div>
+            <div class="mist-calibrate">
+              <span class="mini-label">按键模块现场校准</span>
+              <div class="tool-buttons">
+                <button class="button subtle" data-mist-action="PULSE" type="button">点按一下 (PULSE)</button>
+                <button class="button subtle" data-mist-action="SYNC ON" type="button">记为开</button>
+                <button class="button subtle" data-mist-action="SYNC OFF" type="button">记为关</button>
+              </div>
+            </div>
+            <form class="rh-form" id="rh-form" novalidate>
+              <label>湿度目标（%RH）<input id="rh-target" type="number" min="1" max="95" step="1" required value="80" aria-describedby="rh-error"></label>
+              <button class="button secondary" id="rh-apply" type="submit">启用反馈</button>
+              <small class="field-error" id="rh-error" hidden></small>
+            </form>
+            <button class="button subtle" id="rh-off" type="button">取消所选舱反馈</button>
+            <p class="hint">由 Nano 执行：低于目标 − 2 %RH 时开雾化，达到目标时关。手动雾化会取消对应舱的反馈。</p>
+          </div>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <footer class="frame page-footer"><span>Thermarium / 双舱温室实验</span><span id="footer-source">模拟数据仅供演示</span></footer>
+
+  <dialog id="confirm-command" aria-labelledby="confirm-title" aria-describedby="confirm-detail">
+    <form method="dialog">
+      <h2 id="confirm-title">确认发送命令</h2>
+      <p id="confirm-detail"></p>
+      <div class="dialog-actions"><button class="button secondary" value="cancel" autofocus>返回</button><button class="button primary" value="send" id="confirm-send">发送到 Arduino</button></div>
+    </form>
+  </dialog>
+</body>
+</html>

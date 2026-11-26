@@ -1,51 +1,41 @@
 /*
  * =====================================================================
- *  双舱温室控制程序  GreenhouseDual  v0.1（初版，尚未经实物通电验证）
+ *  双舱温室控制程序  GreenhouseDual  v1.1（兼容学校 PPT 单侧接线 & 双舱扩展）
  * =====================================================================
  *  主板：Arduino Nano v3.0（ATmega328P，5 V，CH340 串口芯片）
- *  依据：《双舱温室电路设计 v1》、课件 greenHouse.ino、Greenhouse Project 实验方案
+ *  依据：学校课件《Arduino - 2026版.pptx》/ greenHouse.ino、《双舱温室电路设计最终稿》
  *
- *  功能
- *   1. 通过 TCA9548A 分别读取左舱 A、右舱 B 两颗 SCD40（同为 0x62 地址）的
- *      CO2 / 温度 / 相对湿度，每约 5 秒一组，经 USB 串口发给电脑记录。
- *   2. 串口命令控制：两盏卤素灯同步开关（带自动关灯计时）、两台雾化器、两台风扇。
- *   3. 自动加湿：设定目标湿度后，雾化器按阈值自动启停（带回差）。
- *   4. RUN 实验模式：记录基线温度 → 开灯 N 秒 → 自动关灯 → 输出两舱温升及差值。
- *   5. 安全：舱温超过 OVERHEAT_C 自动关灯；灯最长连续开 LAMP_MAX_S 秒；
- *      传感器掉线时停止该舱的自动加湿；上电所有输出默认关闭。
- *   6. 0.96 寸 OLED 同屏显示两舱读数和设备状态（可关闭）。
- *
- *  接线（Nano 引脚）
- *   A4 / A5   → TCA9548A SDA / SCL（A0/A1/A2 接地，地址 0x70）
- *               CH0 (SD0/SC0) → 左舱 A 的 SCD40；CH1 (SD1/SC1) → 右舱 B 的 SCD40
- *   D3        → 左舱 A 风扇驱动（MOSFET 栅极，经 100 Ω，10 kΩ 下拉）
- *   D4        → 左舱 A 雾化器（按键三极管基极 或 驱动板 EN，见 MIST_MODE）
- *   D5        → 右舱 B 风扇驱动
- *   D6        → 右舱 B 雾化器
- *   D7        → 卤素灯 MOSFET（两盏灯并联，同步开关）
- *   D13/D11/D10/D9/D8 → OLED 的 D0(SCK)/D1(SDA)/CS/DC/RES（六针屏无 CS，D10 空着即可）
- *   没接 TCA9548A 时程序自动进入“单传感器模式”：主总线上的 SCD40 当作 A 舱，方便先台架测试。
+ *  接线模式选择（见下方 1.1 配置区 WIRING_PROFILE）：
+ *   1) WIRING_SCHOOL_PPT（默认，明天实验室单侧测试按此接线）：
+ *      - SCD40 (单颗) → A4 (SDA) / A5 (SCL)，5 V，GND
+ *      - 0.96 寸六针 OLED（无 CS）→ D13 (SCK), D11 (SDA/MOSI), D8 (RES), D9 (DC)
+ *      - 风扇继电器 CH1 → D2
+ *      - 雾化器三极管 B → D3（经基极限流电阻）
+ *      - 预留雾化器 B   → D6（暂不接）
+ *   2) WIRING_FINAL_PDF（双舱完整器材到齐后可切换，或沿用 D2/D3/D6）：
+ *      - TCA9548A (0x70) → A4 / A5，CH0=A 舱 SCD40，CH1=B 舱 SCD40
+ *      - 风扇继电器 K1 → D3，雾化器 A → D4，雾化器 B → D6
+ *   * 没接 TCA9548A 时自动进入“单传感器模式”：主总线上的 SCD40 作为 A 通道，
+ *     OLED 自动切换为全屏单区大字排版；接上 TCA9548A 后自动切换为双舱分栏。
  *
  *  需要的库（库管理器安装）：SparkFun SCD4x Arduino Library、U8g2（Wire、SPI 为自带库）
  *
  *  ---------------- 串口协议（115200 波特率，每条命令以换行结束） ----------------
- *  串口监视器右下角请选 “换行 / New Line”。命令不区分大小写，A/B 不写 = 两舱同时。
+ *  串口监视器右下角请选 “换行 / New Line”。命令不区分大小写，A/B 不写 = 全部可用舱。
  *    HELP                        显示命令列表
  *    STATUS                      输出一行 STATE 状态
- *    STOP                        全部关闭：关灯、关雾化、关风扇、取消自动加湿和 RUN
- *    LAMP ON [秒] | LAMP OFF     开/关灯；不写秒数则按 LAMP_MAX_S 自动关
- *    RUN <秒>                    实验：取基线 → 开灯 <秒> → 关灯并输出 RESULT（需先关灯）
+ *    SCAN                        扫描 I2C 总线（排查 0x62 / 0x70 接线）
+ *    STOP                        全部关闭：关雾化、关风扇、取消自动加湿
  *    MIST [A|B] ON|OFF           雾化器（手动命令会取消该舱的自动加湿）
- *    FAN  [A|B] ON|OFF           风扇
+ *    FAN  ON|OFF                 风扇继电器开关
  *    RH   [A|B] <目标%> | OFF    自动加湿：低于 目标-回差 开雾化，达到目标关
- *    PULSE A|B                   （按键式雾化器）手动“按一下”，用于测试按键循环
- *    SYNC  A|B ON|OFF            （按键式雾化器）告诉程序雾化器的实际状态（不发脉冲）
+ *    PULSE [A|B]                 （按键式雾化器）手动“按一下”，单传感模式可省略 A
+ *    SYNC  [A|B] ON|OFF          （按键式雾化器）告诉程序雾化器的实际状态（不发脉冲）
  *
  *  输出行（以第一个字段区分，电脑端按逗号拆分即可；以 # 开头的是给人看的说明）
- *    DATA,ms,chamber,co2_ppm,temp_C,rh_pct,lamp,mist,fan
+ *    DATA,ms,chamber,co2_ppm,temp_C,rh_pct,mist,fan
  *    EVT,ms,device,chamber,value,note
- *    RESULT,ms,duration_s,reason,A_T0,A_T1,A_dT,A_Tmax,B_T0,B_T1,B_dT,B_Tmax,dT_A_minus_B
- *    STATE,ms,lamp,lamp_left_s,mistA,mistB,fanA,fanB,rhTargetA,rhTargetB,onlineA,onlineB,run
+ *    STATE,ms,mistA,mistB,fan,rhTargetA,rhTargetB,onlineA,onlineB
  *    OK,<命令> / ERR,<原因>
  *  注意：电脑每次打开串口都会让 Nano 复位，复位后所有设备回到关闭状态。
  * =====================================================================
@@ -58,20 +48,31 @@
 
 // ============================ 1. 配置区（按实物修改） ============================
 
-// ---- 1.1 引脚：与《双舱温室电路设计 v1》接线表一致 ----
-#define PIN_FAN_A     3
-#define PIN_MIST_A    4
-#define PIN_FAN_B     5
-#define PIN_MIST_B    6
-#define PIN_LAMP      7
-#define PIN_OLED_CS   10
+// ---- 1.1 接线方案选择：默认按学校 PPT 接线（风扇 D2、雾化 D3） ----
+#define WIRING_SCHOOL_PPT  1   // 学校 PPT 接线：风扇 D2，雾化 A D3，雾化 B 预留 D6
+#define WIRING_FINAL_PDF   2   // 最终双舱稿接线：风扇 D3，雾化 A D4，雾化 B D6
+#define WIRING_PROFILE     WIRING_SCHOOL_PPT
+
+#if WIRING_PROFILE == WIRING_SCHOOL_PPT
+  #define PIN_FAN          2
+  #define PIN_MIST_A       3
+  #define PIN_MIST_B       6
+  #define WIRING_TAG       "SCHOOL_PPT"
+#elif WIRING_PROFILE == WIRING_FINAL_PDF
+  #define PIN_FAN          3
+  #define PIN_MIST_A       4
+  #define PIN_MIST_B       6
+  #define WIRING_TAG       "FINAL_PDF"
+#else
+  #error "Unknown WIRING_PROFILE"
+#endif
+
 #define PIN_OLED_DC   9
 #define PIN_OLED_RST  8
 
 // ---- 1.2 输出的“开”电平 ----
-// MOSFET、S9013 三极管、高电平触发继电器 → HIGH；低电平触发继电器 → 改成 LOW
+// 学校单路继电器与 S9013 三极管均为高电平触发 → HIGH；若换低电平触发继电器 → 改成 LOW
 #define FAN_ON_LEVEL   HIGH
-#define LAMP_ON_LEVEL  HIGH
 #define MIST_ON_LEVEL  HIGH   // 按键模式下表示“按下”的电平
 
 // ---- 1.3 雾化器控制方式 ----
@@ -91,7 +92,7 @@
 #define MUX_CH_A         0        // 左舱 A 接 TCA9548A 的通道
 #define MUX_CH_B         1        // 右舱 B
 // 自动自校准（ASC）会假设传感器定期接触 400 ppm 室外空气。实验中会往舱内加 CO2，
-// 为了两颗传感器在实验期间不各自“漂移校准”，默认关闭（只改传感器 RAM，不写入 EEPROM）。
+// 为了传感器在实验期间不“漂移校准”，默认关闭（只改传感器 RAM，不写入 EEPROM）。
 #define SCD_AUTO_CALIBRATION  false
 #define SENSOR_POLL_MS   1000     // 每 1 s 查询一次是否有新数据（SCD40 每 5 s 出一组）
 #define SENSOR_STALE_MS  15000    // 超过 15 s 没有新数据 → 判定该舱传感器掉线
@@ -100,30 +101,27 @@
 // ---- 1.5 自动加湿 ----
 #define RH_HYSTERESIS    2.0      // 回差：RH < 目标-2 开雾化，RH >= 目标 关雾化
 
-// ---- 1.6 安全 ----
-#define OVERHEAT_C       50.0     // 任一舱温度 ≥ 此值，立即关灯
-#define LAMP_MAX_S       3600UL   // 灯单次最长开启时间（秒）
-
-// ---- 1.7 显示 ----
+// ---- 1.6 显示 ----
 #define USE_OLED         1        // 不接 OLED 可改成 0
 #define OLED_ROTATE_180  1        // 课件程序把屏幕旋转了 180°
 #define OLED_REFRESH_MS  1000
 #define LABEL_A          "WET"    // 屏幕上的舱名：A=湿海绵
-#define LABEL_B          "DRY"    // B=干沙土 / 混凝土
+#define LABEL_B          "CONC"   // B=混凝土
 
 #define SERIAL_BAUD      115200
 
 // ============================ 2. 全局对象与状态 ============================
 
 #if USE_OLED
-// 与课件接线完全相同（D13=SCK，D11=MOSI），改用硬件 SPI 刷新更快；页缓冲模式只占 128 字节内存
-U8G2_SSD1306_128X64_NONAME_1_4W_HW_SPI u8g2(U8G2_R0, PIN_OLED_CS, PIN_OLED_DC, PIN_OLED_RST);
+// 学校 0.96 寸六针屏无 CS：D13=SCK，D11=MOSI，D9=DC，D8=RES
+U8G2_SSD1306_128X64_NONAME_1_4W_HW_SPI u8g2(
+    U8G2_R0, U8X8_PIN_NONE, PIN_OLED_DC, PIN_OLED_RST);
 #endif
 
 struct Chamber {
   char     id;              // 'A' 或 'B'
   uint8_t  muxCh;
-  uint8_t  fanPin, mistPin;
+  uint8_t  mistPin;
   SCD4x    sensor;
 
   bool     online;          // 传感器已启动周期测量且未超时
@@ -132,8 +130,6 @@ struct Chamber {
   float    temp, rh;
   unsigned long lastDataMs, lastInitTryMs;
 
-  bool     fanOn;
-
   bool     mistOn;          // 程序认为的雾化器实际状态
   bool     mistTarget;      // 希望达到的状态（由命令或自动加湿设置）
   bool     mistAfterPulses; // 当前这串按键脉冲结束后的状态
@@ -141,19 +137,12 @@ struct Chamber {
   unsigned long mistEdgeMs, mistLastSwitchMs;
 
   uint8_t  rhTarget;        // 自动加湿目标 %RH，0 = 关闭
-
-  float    runT0, runTmax;  // RUN 实验的基线温度和峰值温度
 };
 
 Chamber cham[2];
 
 bool muxPresent = false;
-
-bool lampOn = false;
-unsigned long lampOffAtMs = 0;
-
-bool runActive = false;
-unsigned long runStartMs = 0;
+bool fanOn = false;
 
 char    cmdBuf[48];
 uint8_t cmdLen = 0;
@@ -181,7 +170,7 @@ bool i2cPresent(uint8_t addr) {
 
 // 打开 TCA9548A 上对应舱的通道（每次只开一路）
 bool selectChamber(uint8_t i) {
-  if (!muxPresent) return i == 0;          // 单传感器模式：只有 A 舱
+  if (!muxPresent) return i == 0;          // 单传感器模式：只有 A 通道
   Wire.beginTransmission(MUX_ADDR);
   Wire.write((uint8_t)(1 << cham[i].muxCh));
   return Wire.endTransmission() == 0;
@@ -206,49 +195,13 @@ void printOnOffEvt(const __FlashStringHelper *device, char chamberId, bool on,
   Serial.println();
 }
 
-void printMMSS(Print &out, unsigned long s) {
-  unsigned long m = s / 60, sec = s % 60;
-  if (m < 10) out.print('0');
-  out.print(m);
-  out.print(':');
-  if (sec < 10) out.print('0');
-  out.print(sec);
-}
+// ============================ 4. 执行器：风扇 / 雾化器 ============================
 
-unsigned long lampSecondsLeft() {
-  if (!lampOn) return 0;
-  long left = (long)(lampOffAtMs - millis());
-  return left > 0 ? (unsigned long)left / 1000UL : 0;
-}
-
-// ============================ 4. 执行器：风扇 / 灯 / 雾化器 ============================
-
-void setFan(uint8_t i, bool on) {
-  Chamber &c = cham[i];
-  if (c.fanOn == on) return;
-  c.fanOn = on;
-  writeOutput(c.fanPin, on, FAN_ON_LEVEL);
-  printOnOffEvt(F("FAN"), c.id, on, NULL);
-}
-
-void finishRun(const __FlashStringHelper *reason);
-
-void lampOnFor(unsigned long seconds) {
-  lampOn = true;
-  writeOutput(PIN_LAMP, true, LAMP_ON_LEVEL);
-  lampOffAtMs = millis() + seconds * 1000UL;
-  evtHead(F("LAMP"), '-');
-  Serial.print(F("ON,"));
-  Serial.print(seconds);
-  Serial.println('s');
-}
-
-void lampOff(const __FlashStringHelper *reason) {
-  if (!lampOn) return;
-  lampOn = false;
-  writeOutput(PIN_LAMP, false, LAMP_ON_LEVEL);
-  printOnOffEvt(F("LAMP"), '-', false, reason);
-  if (runActive) finishRun(reason);
+void setFan(bool on) {
+  if (fanOn == on) return;
+  fanOn = on;
+  writeOutput(PIN_FAN, on, FAN_ON_LEVEL);
+  printOnOffEvt(F("FAN"), '-', on, NULL);
 }
 
 // ---- 雾化器 ----
@@ -342,11 +295,9 @@ void printData(const Chamber &c) {
   Serial.print(',');
   Serial.print(c.rh, 1);
   Serial.print(',');
-  Serial.print(lampOn ? 1 : 0);
-  Serial.print(',');
   Serial.print(c.mistOn ? 1 : 0);
   Serial.print(',');
-  Serial.println(c.fanOn ? 1 : 0);
+  Serial.println(fanOn ? 1 : 0);
 }
 
 void autoHumidity(Chamber &c) {
@@ -356,22 +307,13 @@ void autoHumidity(Chamber &c) {
 }
 
 void onNewData(Chamber &c) {
-  // 过热保护
-  if (lampOn && c.temp >= OVERHEAT_C) {
-    evtHead(F("OVERHEAT"), c.id);
-    Serial.print(c.temp, 2);
-    Serial.println(F(",LAMP_OFF"));
-    lampOff(F("OVERHEAT"));
-  }
-  // RUN 期间记录峰值温度
-  if (runActive && (isnan(c.runTmax) || c.temp > c.runTmax)) c.runTmax = c.temp;
-
   autoHumidity(c);
 }
 
 void pollSensors() {
   unsigned long now = millis();
-  for (uint8_t i = 0; i < 2; i++) {
+  uint8_t limit = muxPresent ? 2 : 1;
+  for (uint8_t i = 0; i < limit; i++) {
     Chamber &c = cham[i];
 
     if (!c.online) {
@@ -386,97 +328,51 @@ void pollSensors() {
     }
 
     if (selectChamber(i) && c.sensor.readMeasurement()) {
-      c.co2  = c.sensor.getCO2();
-      c.temp = c.sensor.getTemperature();
-      c.rh   = c.sensor.getHumidity();
-      c.hasData = true;
-      c.lastDataMs = now;
-      printData(c);
-      onNewData(c);
+      uint16_t co2 = c.sensor.getCO2();
+      float temp = c.sensor.getTemperature();
+      float rh   = c.sensor.getHumidity();
+      if (co2 > 0 && !isnan(temp) && !isnan(rh)) {
+        c.co2  = co2;
+        c.temp = temp;
+        c.rh   = rh;
+        c.hasData = true;
+        c.lastDataMs = now;
+        printData(c);
+        onNewData(c);
+      }
     } else if (now - c.lastDataMs >= SENSOR_STALE_MS) {
       markLost(c);
     }
   }
 }
 
-// ============================ 6. RUN 实验 ============================
+// ============================ 6. 串口命令 ============================
 
-void startRun(unsigned long seconds) {
-  runActive = true;
-  runStartMs = millis();
-  for (uint8_t i = 0; i < 2; i++) {
-    Chamber &c = cham[i];
-    c.runT0 = (c.online && c.hasData) ? c.temp : NAN;
-    c.runTmax = c.runT0;
-  }
-  evtHead(F("RUN"), '-');
-  Serial.print(F("START,"));
-  Serial.print(seconds);
-  Serial.println('s');
-  Serial.print(F("# RUN baseline: A="));
-  Serial.print(cham[0].runT0, 2);
-  Serial.print(F(" C, B="));
-  Serial.print(cham[1].runT0, 2);
-  Serial.println(F(" C"));
-  lampOnFor(seconds);
+void printPinsBanner() {
+  Serial.print(F("# PINS,profile=" WIRING_TAG ",fan=D"));
+  Serial.print(PIN_FAN);
+  Serial.print(F(",mistA=D"));
+  Serial.print(PIN_MIST_A);
+  Serial.print(F(",mistB=D"));
+  Serial.print(PIN_MIST_B);
+  Serial.println(F(",i2c=A4/A5,oled=D13/D11/D9/D8"));
 }
-
-void finishRun(const __FlashStringHelper *reason) {
-  runActive = false;
-  unsigned long durS = (millis() - runStartMs) / 1000UL;
-  float dT[2];
-
-  Serial.print(F("RESULT,"));
-  Serial.print(millis());
-  Serial.print(',');
-  Serial.print(durS);
-  Serial.print(',');
-  Serial.print(reason);
-  for (uint8_t i = 0; i < 2; i++) {
-    Chamber &c = cham[i];
-    float t1 = (c.online && c.hasData) ? c.temp : NAN;
-    dT[i] = t1 - c.runT0;                   // 任一为 NAN 结果也是 NAN
-    Serial.print(',');  Serial.print(c.runT0, 2);
-    Serial.print(',');  Serial.print(t1, 2);
-    Serial.print(',');  Serial.print(dT[i], 2);
-    Serial.print(',');  Serial.print(c.runTmax, 2);
-  }
-  Serial.print(',');
-  Serial.println(dT[0] - dT[1], 2);
-
-  Serial.print(F("# RUN finished ("));
-  Serial.print(reason);
-  Serial.print(F(") after "));
-  Serial.print(durS);
-  Serial.print(F(" s: rise A="));
-  Serial.print(dT[0], 2);
-  Serial.print(F(" K, B="));
-  Serial.print(dT[1], 2);
-  Serial.print(F(" K, A-B="));
-  Serial.print(dT[0] - dT[1], 2);
-  Serial.println(F(" K"));
-}
-
-// ============================ 7. 串口命令 ============================
 
 void printHeader() {
-  Serial.println(F("#COLS,DATA,ms,chamber,co2_ppm,temp_C,rh_pct,lamp,mist,fan"));
+  Serial.println(F("#COLS,DATA,ms,chamber,co2_ppm,temp_C,rh_pct,mist,fan"));
   Serial.println(F("#COLS,EVT,ms,device,chamber,value,note"));
-  Serial.println(F("#COLS,RESULT,ms,duration_s,reason,A_T0,A_T1,A_dT,A_Tmax,B_T0,B_T1,B_dT,B_Tmax,dT_A_minus_B"));
-  Serial.println(F("#COLS,STATE,ms,lamp,lamp_left_s,mistA,mistB,fanA,fanB,rhTargetA,rhTargetB,onlineA,onlineB,run"));
+  Serial.println(F("#COLS,STATE,ms,mistA,mistB,fan,rhTargetA,rhTargetB,onlineA,onlineB"));
 }
 
 void printHelp() {
-  Serial.println(F("# Commands (A/B optional, default = both chambers):"));
-  Serial.println(F("#  HELP | STATUS | STOP"));
-  Serial.println(F("#  LAMP ON [s] | LAMP OFF"));
-  Serial.println(F("#  RUN <s>              baseline -> lamp on <s> -> RESULT"));
+  Serial.println(F("# Commands (A/B optional, default = all active chambers):"));
+  Serial.println(F("#  HELP | STATUS | SCAN | STOP"));
   Serial.println(F("#  MIST [A|B] ON|OFF"));
-  Serial.println(F("#  FAN  [A|B] ON|OFF"));
+  Serial.println(F("#  FAN  ON|OFF"));
   Serial.println(F("#  RH   [A|B] <1-95> | OFF   auto humidify"));
 #if MIST_MODE == MIST_MODE_BUTTON
-  Serial.println(F("#  PULSE A|B            one button press (test)"));
-  Serial.println(F("#  SYNC A|B ON|OFF      tell real mist state"));
+  Serial.println(F("#  PULSE [A|B]          one button press (test)"));
+  Serial.println(F("#  SYNC  [A|B] ON|OFF   tell real mist state"));
 #endif
   printHeader();
 }
@@ -484,16 +380,45 @@ void printHelp() {
 void printState() {
   Serial.print(F("STATE,"));
   Serial.print(millis());
-  Serial.print(',');
-  Serial.print(lampOn ? 1 : 0);
-  Serial.print(',');
-  Serial.print(lampSecondsLeft());
   for (uint8_t i = 0; i < 2; i++) { Serial.print(','); Serial.print(cham[i].mistOn ? 1 : 0); }
-  for (uint8_t i = 0; i < 2; i++) { Serial.print(','); Serial.print(cham[i].fanOn ? 1 : 0); }
+  Serial.print(',');
+  Serial.print(fanOn ? 1 : 0);
   for (uint8_t i = 0; i < 2; i++) { Serial.print(','); Serial.print(cham[i].rhTarget); }
   for (uint8_t i = 0; i < 2; i++) { Serial.print(','); Serial.print(cham[i].online ? 1 : 0); }
-  Serial.print(',');
-  Serial.println(runActive ? 1 : 0);
+  Serial.println();
+}
+
+void scanI2c() {
+  muxPresent = i2cPresent(MUX_ADDR);
+  Serial.print(F("# SCAN,mux="));
+  Serial.print(muxPresent ? F("0x70") : F("NONE"));
+  Serial.print(F(",main="));
+  uint8_t found = 0;
+  for (uint8_t addr = 0x08; addr <= 0x77; addr++) {
+    if (i2cPresent(addr)) {
+      if (found++) Serial.print(' ');
+      Serial.print(F("0x"));
+      if (addr < 16) Serial.print('0');
+      Serial.print(addr, HEX);
+    }
+  }
+  if (!found) Serial.print(F("NONE"));
+  if (muxPresent) {
+    for (uint8_t ch = 0; ch < 2; ch++) {
+      Wire.beginTransmission(MUX_ADDR);
+      Wire.write((uint8_t)(1 << ch));
+      if (Wire.endTransmission() == 0) {
+        Serial.print(F(",CH"));
+        Serial.print(ch);
+        Serial.print('=');
+        Serial.print(i2cPresent(SCD4X_ADDR) ? F("0x62") : F("NONE"));
+      }
+    }
+    Wire.beginTransmission(MUX_ADDR);
+    Wire.write((uint8_t)0);
+    Wire.endTransmission();
+  }
+  Serial.println();
 }
 
 void replyOk(const char *cmd) {
@@ -532,11 +457,10 @@ void cancelAutoRh(Chamber &c) {
 }
 
 void allStop() {
-  lampOff(F("STOP"));
+  setFan(false);
   for (uint8_t i = 0; i < 2; i++) {
     cancelAutoRh(cham[i]);
     cham[i].mistTarget = false;
-    setFan(i, false);
   }
   evtHead(F("ALL"), '-');
   Serial.println(F("STOP,"));
@@ -552,43 +476,30 @@ void handleCommand(char *line) {
 
   if (!strcmp(cmd, "HELP") || !strcmp(cmd, "?")) { printHelp(); return; }
   if (!strcmp(cmd, "STATUS")) { printState(); return; }
+  if (!strcmp(cmd, "SCAN"))   { scanI2c(); replyOk(cmd); return; }
   if (!strcmp(cmd, "STOP"))   { allStop(); replyOk(cmd); return; }
 
-  if (!strcmp(cmd, "LAMP")) {
+  if (!strcmp(cmd, "FAN")) {
     int8_t on = (n > 1) ? parseOnOff(tok[1]) : -1;
-    if (on < 0) { replyErr(F("usage: LAMP ON [s] | LAMP OFF")); return; }
-    if (on == 0) { lampOff(F("CMD")); replyOk(cmd); return; }
-    if (runActive) { replyErr(F("RUN in progress, use LAMP OFF or STOP")); return; }
-    unsigned long s = (n > 2) ? strtoul(tok[2], NULL, 10) : LAMP_MAX_S;
-    if (s < 1 || s > LAMP_MAX_S) { replyErr(F("seconds out of range")); return; }
-    lampOnFor(s);
+    if (on < 0) { replyErr(F("usage: FAN ON|OFF")); return; }
+    setFan(on);
     replyOk(cmd);
     return;
   }
 
-  if (!strcmp(cmd, "RUN")) {
-    unsigned long s = (n > 1) ? strtoul(tok[1], NULL, 10) : 0;
-    if (s < 1 || s > LAMP_MAX_S) { replyErr(F("usage: RUN <seconds>")); return; }
-    if (lampOn) { replyErr(F("lamp is on, LAMP OFF and wait for baseline first")); return; }
-    if (!cham[0].hasData && !cham[1].hasData) { replyErr(F("no sensor data yet")); return; }
-    startRun(s);
-    replyOk(cmd);
-    return;
-  }
-
-  if (!strcmp(cmd, "MIST") || !strcmp(cmd, "FAN")) {
-    bool isMist = (cmd[0] == 'M');
+  if (!strcmp(cmd, "MIST")) {
     uint8_t mask = parseChambers(tok, n, k);
     int8_t on = (k < n) ? parseOnOff(tok[k]) : -1;
-    if (on < 0) { replyErr(F("usage: MIST|FAN [A|B] ON|OFF")); return; }
+    if (on < 0) { replyErr(F("usage: MIST [A|B] ON|OFF")); return; }
+    if (!muxPresent && mask == 2) {
+      replyErr(F("single-sensor mode: chamber B unavailable"));
+      return;
+    }
+    uint8_t activeMask = muxPresent ? mask : (on ? (mask & 1) : mask);
     for (uint8_t i = 0; i < 2; i++) {
-      if (!(mask & (1 << i))) continue;
-      if (isMist) {
-        cancelAutoRh(cham[i]);              // 手动命令优先，取消自动加湿
-        cham[i].mistTarget = on;
-      } else {
-        setFan(i, on);
-      }
+      if (!(activeMask & (1 << i))) continue;
+      cancelAutoRh(cham[i]);              // 手动命令优先，取消自动加湿
+      cham[i].mistTarget = on;
     }
     replyOk(cmd);
     return;
@@ -602,8 +513,13 @@ void handleCommand(char *line) {
       replyErr(F("target must be 1-95 or OFF"));
       return;
     }
+    if (!muxPresent && mask == 2) {
+      replyErr(F("single-sensor mode: chamber B unavailable"));
+      return;
+    }
+    uint8_t activeMask = muxPresent ? mask : (v ? (mask & 1) : mask);
     for (uint8_t i = 0; i < 2; i++) {
-      if (!(mask & (1 << i))) continue;
+      if (!(activeMask & (1 << i))) continue;
       Chamber &c = cham[i];
       c.rhTarget = (uint8_t)v;
       evtHead(F("AUTO_RH"), c.id);
@@ -620,7 +536,14 @@ void handleCommand(char *line) {
   if (!strcmp(cmd, "PULSE") || !strcmp(cmd, "SYNC")) {
     bool isPulse = (cmd[0] == 'P');
     uint8_t mask = parseChambers(tok, n, k);
-    if (mask == 3) { replyErr(F("choose one chamber: A or B")); return; }
+    if (mask == 3) {
+      if (!muxPresent) mask = 1;          // 单传感器模式下默认对 A 执行
+      else { replyErr(F("choose one chamber: A or B")); return; }
+    }
+    if (!muxPresent && mask == 2) {
+      replyErr(F("single-sensor mode: chamber B unavailable"));
+      return;
+    }
     Chamber &c = cham[mask == 1 ? 0 : 1];
     if (c.mistEdgesLeft) { replyErr(F("mist busy, try again")); return; }
     cancelAutoRh(c);
@@ -631,7 +554,7 @@ void handleCommand(char *line) {
       Serial.println(F("PULSE,use SYNC if state changed"));
     } else {
       int8_t on = (k < n) ? parseOnOff(tok[k]) : -1;
-      if (on < 0) { replyErr(F("usage: SYNC A|B ON|OFF")); return; }
+      if (on < 0) { replyErr(F("usage: SYNC [A|B] ON|OFF")); return; }
       c.mistOn = c.mistTarget = on;
       evtHead(F("MIST"), c.id);
       Serial.println(on ? F("SYNC_ON,") : F("SYNC_OFF,"));
@@ -687,10 +610,45 @@ void drawChamberColumn(const Chamber &c, uint8_t x) {
 
   u8g2.setCursor(x, 52);
   u8g2.print(c.mistOn ? F("M:ON ") : F("M:-- "));
-  u8g2.print(c.fanOn ? F("F:ON") : F("F:--"));
+  u8g2.print(fanOn ? F("F:ON") : F("F:--"));
 }
 
-void drawOled() {
+void drawOledSingle(const Chamber &c) {
+  u8g2.firstPage();
+  do {
+    u8g2.setFont(u8g2_font_6x10_tr);
+    u8g2.setCursor(0, 9);
+    u8g2.print(F("1-ZONE " LABEL_A));
+    u8g2.setCursor(76, 9);
+    if (c.rhTarget) { u8g2.print(F("RH>")); u8g2.print(c.rhTarget); u8g2.print('%'); }
+    else            { u8g2.print(F("A4/A5")); }
+    u8g2.drawHLine(0, 12, 128);
+
+    if (!c.online) {
+      u8g2.setCursor(0, 27);
+      u8g2.print(F("NO SCD40 (0x62)"));
+      u8g2.setCursor(0, 40);
+      u8g2.print(F("Check A4/A5 & 5V"));
+    } else if (!c.hasData) {
+      u8g2.setCursor(0, 27);
+      u8g2.print(F("SCD40 Detected"));
+      u8g2.setCursor(0, 40);
+      u8g2.print(F("First data ~5 s..."));
+    } else {
+      u8g2.setCursor(0, 24); u8g2.print(F("Temp: ")); u8g2.print(c.temp, 2); u8g2.print(F(" C"));
+      u8g2.setCursor(0, 35); u8g2.print(F("Humi: ")); u8g2.print(c.rh, 1);   u8g2.print(F(" %RH"));
+      u8g2.setCursor(0, 46); u8g2.print(F("CO2 : ")); u8g2.print(c.co2);     u8g2.print(F(" ppm"));
+    }
+
+    u8g2.drawHLine(0, 52, 128);
+    u8g2.setCursor(0, 63);
+    u8g2.print(c.mistOn ? F("MIST:ON ") : F("MIST:OFF"));
+    u8g2.setCursor(72, 63);
+    u8g2.print(fanOn ? F("FAN:ON") : F("FAN:OFF"));
+  } while (u8g2.nextPage());
+}
+
+void drawOledDual() {
   u8g2.firstPage();
   do {
     u8g2.setFont(u8g2_font_6x10_tr);
@@ -700,74 +658,77 @@ void drawOled() {
     u8g2.drawHLine(0, 54, 128);
 
     u8g2.setCursor(0, 63);
-    if (lampOn) {
-      u8g2.print(runActive ? F("RUN  ") : F("LAMP "));
-      printMMSS(u8g2, lampSecondsLeft());
-    } else {
-      u8g2.print(F("LAMP OFF"));
-    }
-    if (!muxPresent) {
-      u8g2.setCursor(80, 63);
-      u8g2.print(F("NO MUX"));
-    }
+    u8g2.print(fanOn ? F("FAN ON") : F("FAN OFF"));
+    u8g2.setCursor(74, 63);
+    u8g2.print(F("DUAL MUX"));
   } while (u8g2.nextPage());
+}
+
+void drawOled() {
+  if (!muxPresent) drawOledSingle(cham[0]);
+  else             drawOledDual();
 }
 
 #endif
 
 // ============================ 9. setup / loop ============================
 
-void setupChamber(uint8_t i, char id, uint8_t muxCh, uint8_t fanPin, uint8_t mistPin) {
+void setupChamber(uint8_t i, char id, uint8_t muxCh, uint8_t mistPin) {
   Chamber &c = cham[i];
   c.id = id;
   c.muxCh = muxCh;
-  c.fanPin = fanPin;
   c.mistPin = mistPin;
   c.online = c.hasData = false;
-  c.fanOn = c.mistOn = c.mistTarget = false;
+  c.mistOn = c.mistTarget = false;
   c.mistEdgesLeft = 0;
   c.mistLastSwitchMs = millis() - MIST_MIN_SWITCH_MS;  // 上电后第一次开关不用等待
   c.rhTarget = 0;
-  c.runT0 = c.runTmax = NAN;
 }
 
 void setup() {
   // 1) 第一件事：所有输出置为“关”
-  initOutput(PIN_LAMP,   LAMP_ON_LEVEL);
-  initOutput(PIN_FAN_A,  FAN_ON_LEVEL);
-  initOutput(PIN_FAN_B,  FAN_ON_LEVEL);
+  initOutput(PIN_FAN,    FAN_ON_LEVEL);
   initOutput(PIN_MIST_A, MIST_ON_LEVEL);
   initOutput(PIN_MIST_B, MIST_ON_LEVEL);
 
-  setupChamber(0, 'A', MUX_CH_A, PIN_FAN_A, PIN_MIST_A);
-  setupChamber(1, 'B', MUX_CH_B, PIN_FAN_B, PIN_MIST_B);
+  setupChamber(0, 'A', MUX_CH_A, PIN_MIST_A);
+  setupChamber(1, 'B', MUX_CH_B, PIN_MIST_B);
 
   Serial.begin(SERIAL_BAUD);
-  Serial.println(F("# GreenhouseDual v0.1 booting"));
+  Serial.println(F("# GreenhouseDual v1.1 booting"));
+  printPinsBanner();
 
 #if USE_OLED
+  pinMode(10, OUTPUT);
+  digitalWrite(10, HIGH); // 六针 OLED 无 CS，锁定硬件 SPI SS 为输出高电平防止误入从机模式
   u8g2.begin();
   if (OLED_ROTATE_180) u8g2.setDisplayRotation(U8G2_R2);
   drawOled();
 #endif
 
   Wire.begin();
+#ifdef WIRE_HAS_TIMEOUT
   Wire.setWireTimeout(25000, true);   // I2C 卡死时 25 ms 超时并复位总线，避免程序挂起
+#endif
   delay(1000);                        // SCD40 上电后约需 1 s 才能通信
 
   muxPresent = i2cPresent(MUX_ADDR);
   if (muxPresent) Serial.println(F("# TCA9548A found at 0x70"));
   else            Serial.println(F("# TCA9548A NOT found: single-sensor mode (main bus = chamber A)"));
 
-  // 先分别配置两颗传感器，再紧接着同时启动测量，让两舱的采样时刻尽量对齐
-  bool ok[2];
-  for (uint8_t i = 0; i < 2; i++) ok[i] = initSensor(i);
-  for (uint8_t i = 0; i < 2; i++) {
+  // 先分别配置传感器，再紧接着同时启动测量，让双舱采样时刻尽量对齐
+  uint8_t limit = muxPresent ? 2 : 1;
+  bool ok[2] = {false, false};
+  for (uint8_t i = 0; i < limit; i++) ok[i] = initSensor(i);
+  for (uint8_t i = 0; i < limit; i++) {
     if (ok[i]) ok[i] = startSensor(i);
     Serial.print(F("# chamber "));
     Serial.print(cham[i].id);
     Serial.println(ok[i] ? F(": SCD40 OK, first data in ~5 s")
                          : F(": SCD40 NOT found, will retry every 10 s"));
+  }
+  if (!muxPresent) {
+    Serial.println(F("# chamber B: skipped (single-sensor mode)"));
   }
 
 #if MIST_MODE == MIST_MODE_BUTTON
@@ -783,7 +744,6 @@ void loop() {
   readSerial();
 
   unsigned long now = millis();
-  if (lampOn && (long)(now - lampOffAtMs) >= 0) lampOff(F("TIMER"));
 
   updateMist(cham[0]);
   updateMist(cham[1]);
